@@ -8,6 +8,9 @@ export type AlertKind =
   | "stale_data"
   | "clock_drift"
   | "rate_limited"
+  | "order_unknown"
+  | "liquidation_buffer"
+  | "daily_loss_limit"
   | "fatal";
 
 export interface Alert {

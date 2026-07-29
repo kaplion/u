@@ -1,3 +1,4 @@
+import type { Mode } from "../config/mode.js";
 import type { Order } from "../oms/order.js";
 
 /**
@@ -15,9 +16,17 @@ export const HARD_LIMITS = {
   maxOrdersPerMinute: 10,
   /** Son fiyattan bu orandan uzak emir reddedilir (fat finger). */
   maxPriceDeviation: 0.1,
+  /**
+   * Faz 6 — LIVE kanarya tavanı: canlı modda emir başına max notional (USD).
+   * Ölçek ancak paper ile canlı sonuçlar uyuştuktan sonra KOD DEĞİŞİKLİĞİ
+   * ve review ile artar.
+   */
+  liveCanaryMaxOrderNotional: 50,
 } as const;
 
 export interface RiskContext {
+  /** Çalışma modu — LIVE'da kanarya tavanı devreye girer. */
+  readonly mode: Mode;
   /** Kill switch aktif mi (dışarıdan tetiklenir). */
   readonly killSwitchActive: boolean;
   /** Son bilinen piyasa fiyatı (fiyat sanity için). */
@@ -75,6 +84,13 @@ export function checkOrder(order: Order, ctx: RiskContext): RiskDecision {
   const notional = order.quantity * price;
   if (!Number.isFinite(notional) || notional <= 0) {
     return deny(`geçersiz notional: ${notional}`);
+  }
+
+  // Faz 6 — LIVE kanarya: canlı mod yalnızca küçük boyutla çalışır.
+  if (ctx.mode === "LIVE" && notional > HARD_LIMITS.liveCanaryMaxOrderNotional) {
+    return deny(
+      `LIVE kanarya tavanı: emir notional ${notional} > ${HARD_LIMITS.liveCanaryMaxOrderNotional} USD`,
+    );
   }
 
   if (!order.reduceOnly) {

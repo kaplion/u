@@ -18,6 +18,7 @@ function makeOrder(overrides: Partial<Order> = {}): Order {
 
 function makeCtx(overrides: Partial<RiskContext> = {}): RiskContext {
   return {
+    mode: "DRY_RUN",
     killSwitchActive: false,
     lastPrice: 100,
     dataStale: false,
@@ -91,5 +92,21 @@ describe("risk kapısı", () => {
   it("geçersiz notional reddedilir", () => {
     const decision = checkOrder(makeOrder({ quantity: 0 }), makeCtx());
     expect(decision.allowed).toBe(false);
+  });
+
+  it("Faz 6 — LIVE kanarya tavanı: canlıda büyük emir reddedilir, PAPER'da geçer", () => {
+    const order = makeOrder({ quantity: 1, price: 100 }); // 100 USD > 50 kanarya
+    const live = checkOrder(order, makeCtx({ mode: "LIVE" }));
+    expect(live.allowed).toBe(false);
+    if (!live.allowed) expect(live.reason).toMatch(/kanarya/);
+
+    const paper = checkOrder(order, makeCtx({ mode: "PAPER" }));
+    expect(paper.allowed).toBe(true);
+
+    const smallLive = checkOrder(
+      makeOrder({ quantity: 0.4, price: 100 }), // 40 USD ≤ 50
+      makeCtx({ mode: "LIVE" }),
+    );
+    expect(smallLive.allowed).toBe(true);
   });
 });

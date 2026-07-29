@@ -1,11 +1,19 @@
 import { App } from "./app.js";
-import { loadConfig } from "./config/config.js";
+import { loadConfig, type Config } from "./config/config.js";
 import { Logger } from "./monitoring/logger.js";
 import { AlertManager } from "./monitoring/alerts.js";
 import { KillSwitch } from "./risk/kill-switch.js";
 import { StateStore } from "./state/state-store.js";
 import { StalenessDetector } from "./market-data/staleness.js";
 import { createBinanceAdapterFromEnv } from "./venues/binance/binance-adapter.js";
+import { createAlpacaAdapterFromEnv } from "./venues/alpaca/alpaca-adapter.js";
+import type { VenueAdapter } from "./venues/venue-adapter.js";
+
+function createAdapter(config: Config, logger: Logger): VenueAdapter | undefined {
+  return config.venue === "alpaca"
+    ? createAlpacaAdapterFromEnv(config.mode, logger)
+    : createBinanceAdapterFromEnv(config.mode, logger);
+}
 
 /**
  * Giriş noktası. Açılış sırası (spec):
@@ -19,7 +27,7 @@ export async function main(): Promise<void> {
     config,
     logger,
     alerts,
-    adapter: createBinanceAdapterFromEnv(config.mode, logger),
+    adapter: createAdapter(config, logger),
     stateStore: new StateStore(config.stateDir),
     killSwitch: new KillSwitch(config.killSwitchFile),
     staleness: new StalenessDetector(config.staleDataThresholdMs),

@@ -65,12 +65,17 @@ function setup(opts: { adapter?: VenueAdapter | undefined; killSwitchOn?: boolea
   if (opts.killSwitchOn === true) writeFileSync(killSwitchFile, "");
   const config: Config = {
     mode: "PAPER",
+    venue: "binance",
     killSwitchFile,
     stateDir: join(dir, "state"),
     staleDataThresholdMs: 15_000,
     symbols: ["BTCUSDT"],
     reconcileIntervalMs: 60_000,
     heartbeatIntervalMs: 10_000,
+    orderTimeoutMs: 5_000,
+    partialFillTimeoutMs: 30_000,
+    dashboardPort: 0,
+    dashboardHost: "127.0.0.1",
   };
   const alertsReceived: Alert[] = [];
   const feed = new FakeFeed();
