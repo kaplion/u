@@ -70,7 +70,7 @@ describe("mod izolasyonu", () => {
     const { adapter, requests } = makeAdapter([{ body: { serverTime: 1 } }]);
     await adapter.fetchServerTime();
     for (const req of requests) {
-      expect(req.url.startsWith("https://testnet.binance.vision")).toBe(true);
+      expect(new URL(req.url).host).toBe("testnet.binance.vision");
     }
   });
 
