@@ -36,9 +36,9 @@ export interface VenueAdapter {
   submitOrder(order: Order): Promise<Order>;
 
   /** Timeout sonrası UNKNOWN emri venue'ya sor — asla varsayma. */
-  queryOrder(clientOrderId: string): Promise<Order | undefined>;
+  queryOrder(clientOrderId: string, symbol: string): Promise<Order | undefined>;
 
-  cancelOrder(clientOrderId: string): Promise<void>;
+  cancelOrder(clientOrderId: string, symbol: string): Promise<void>;
 
   /** Saat kayması kontrolü için venue sunucu zamanı (epoch ms). */
   fetchServerTime(): Promise<number>;
