@@ -316,6 +316,8 @@ export class Oms {
           if (entry.submitAttempts >= this.maxSubmitAttempts) {
             return this.giveUpUnknown(entry, "deneme hakkı bitti — emir venue'ya ulaşmamış");
           }
+          // Venue emri tanımıyor — AYNI clientOrderId ile güvenle yeniden gönder.
+          this.applyState(entry, "PENDING_NEW", "venue emri tanımıyor — aynı ID ile retry");
           continue; // AYNI clientOrderId ile retry — idempotent
         }
         // Venue reddi (iş kuralı/HTTP hatası): REJECTED, sonsuz retry YOK.

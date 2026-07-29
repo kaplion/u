@@ -43,7 +43,9 @@ const TRANSITIONS: Readonly<Record<OrderState, readonly OrderState[]>> = {
   CANCELED: [],
   EXPIRED: [],
   // UNKNOWN'dan çıkış yalnızca venue'ya sorarak olur — her duruma dönebilir.
-  UNKNOWN: ["NEW", "PARTIALLY_FILLED", "FILLED", "REJECTED", "CANCELED", "EXPIRED"],
+  // Venue emri hiç tanımıyorsa AYNI clientOrderId ile yeniden gönderim için
+  // PENDING_NEW'e döner (idempotent retry).
+  UNKNOWN: ["PENDING_NEW", "NEW", "PARTIALLY_FILLED", "FILLED", "REJECTED", "CANCELED", "EXPIRED"],
 };
 
 export function isTerminal(state: OrderState): boolean {
