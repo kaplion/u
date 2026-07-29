@@ -5,5 +5,5 @@ coverage/
 .env
 .env.*
 !.env.example
-state/
+/state/
 KILL_SWITCH
