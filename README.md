@@ -11,10 +11,18 @@ npm start          # botu başlat
 ```
 
 Proje yapısı (`src/`): `config/` (mod ayrımı DRY_RUN/PAPER/LIVE),
-`market-data/` (bayatlık algısı), `oms/` (emir durum makinesi, idempotent
-clientOrderId), `risk/` (sert limitler, kill switch), `state/` (kalıcı state
-store), `venues/` (adaptör arayüzü), `monitoring/` (mod damgalı JSON log).
-Kill switch: `KILL_SWITCH` dosyasını oluşturmak yeterli.
+`market-data/` (WS yönetimi: reconnect + backoff + sessizlik algısı, REST
+snapshot resync, sequence boşluk tespiti, bayatlık algısı), `oms/` (emir durum
+makinesi, idempotent clientOrderId), `risk/` (sert limitler, kill switch),
+`reconciliation/` (venue tek doğru kaynak; sapmada dur + alarm; ≤60sn periyodik),
+`state/` (kalıcı state store), `venues/` (adaptör arayüzü + Binance testnet
+adaptörü: imzalı REST, çekim izinli anahtarı reddetme, ağırlık bazlı rate limit
++ 429/418 backoff), `monitoring/` (mod damgalı JSON log, alarm yöneticisi,
+heartbeat, saat kayması). Kill switch: `KILL_SWITCH` dosyasını oluşturmak
+yeterli. Binance testnet anahtarları `BINANCE_API_KEY` / `BINANCE_API_SECRET`
+environment değişkenlerinden okunur; anahtar yoksa bot çevrimdışı iskelet
+modunda kalır. Mod izolasyonu: yalnızca `LIVE` gerçek borsaya bağlanır,
+`PAPER` ve `DRY_RUN` her zaman testnet'e gider.
 
 ---
 

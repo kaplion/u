@@ -1,42 +1,55 @@
+import { App } from "./app.js";
 import { loadConfig } from "./config/config.js";
 import { Logger } from "./monitoring/logger.js";
+import { AlertManager } from "./monitoring/alerts.js";
 import { KillSwitch } from "./risk/kill-switch.js";
 import { StateStore } from "./state/state-store.js";
 import { StalenessDetector } from "./market-data/staleness.js";
+import { createBinanceAdapterFromEnv } from "./venues/binance/binance-adapter.js";
 
 /**
  * Giriş noktası. Açılış sırası (spec):
  *   state yükle → venue'dan gerçeği çek → karşılaştır → uyuşmuyorsa dur.
- * Venue adaptörleri eklendikçe rekonsiliasyon adımı buraya bağlanır.
  */
-export function main(): void {
+export async function main(): Promise<void> {
   const config = loadConfig();
   const logger = new Logger(config.mode);
-  const killSwitch = new KillSwitch(config.killSwitchFile);
-  const stateStore = new StateStore(config.stateDir);
-  const staleness = new StalenessDetector(config.staleDataThresholdMs);
-
-  logger.info("bot başlatılıyor", {
-    mode: config.mode,
-    killSwitchActive: killSwitch.isActive(),
-    dataStale: staleness.isStale(),
+  const alerts = new AlertManager(logger);
+  const app = new App({
+    config,
+    logger,
+    alerts,
+    adapter: createBinanceAdapterFromEnv(config.mode, logger),
+    stateStore: new StateStore(config.stateDir),
+    killSwitch: new KillSwitch(config.killSwitchFile),
+    staleness: new StalenessDetector(config.staleDataThresholdMs),
   });
 
-  if (killSwitch.isActive()) {
-    logger.warn("kill switch aktif — yeni risk alınmayacak", {
-      file: config.killSwitchFile,
-    });
-  }
+  const shutdown = (signal: string): void => {
+    logger.info("kapanış sinyali alındı", { signal });
+    app.stop();
+    process.exit(0);
+  };
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 
-  // Henüz venue adaptörü yok (Faz 1): burada market data bağlantısı,
-  // rekonsiliasyon ve OMS devreye girecek.
-  stateStore.save("boot", { at: new Date().toISOString(), mode: config.mode });
-  logger.info("iskelet hazır — venue adaptörü bekleniyor (Faz 1)");
+  const result = await app.start();
+  if (result.status === "halted") {
+    // Sapma çözülmeden devam yok — süreç hatayla biter, operatör bakmalı.
+    app.stop();
+    process.exitCode = 1;
+  } else if (result.status === "skeleton") {
+    app.stop();
+  }
 }
 
 const isDirectRun =
   process.argv[1] !== undefined &&
   import.meta.url === new URL(`file://${process.argv[1]}`).href;
 if (isDirectRun) {
-  main();
+  main().catch((err) => {
+    // Anahtar/imza asla hata mesajına girmez (adaptör sözleşmesi).
+    console.error("başlatma hatası:", err instanceof Error ? err.message : err);
+    process.exit(1);
+  });
 }

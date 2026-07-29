@@ -8,6 +8,12 @@ export interface Config {
   readonly stateDir: string;
   /** Bayat veri eşiği (ms) — beklenen aralığın 3 katı önerilir. */
   readonly staleDataThresholdMs: number;
+  /** İzlenecek semboller (ör. BTCUSDT). */
+  readonly symbols: readonly string[];
+  /** Periyodik rekonsiliasyon aralığı (ms) — spec gereği en fazla 60sn. */
+  readonly reconcileIntervalMs: number;
+  /** Heartbeat yazma aralığı (ms). */
+  readonly heartbeatIntervalMs: number;
 }
 
 /**
@@ -26,7 +32,29 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       15_000,
       "STALE_DATA_THRESHOLD_MS",
     ),
+    symbols: parseSymbols(env.SYMBOLS),
+    reconcileIntervalMs: Math.min(
+      parsePositiveInt(env.RECONCILE_INTERVAL_MS, 60_000, "RECONCILE_INTERVAL_MS"),
+      60_000, // spec: rekonsiliasyon aralığı ≤ 60sn
+    ),
+    heartbeatIntervalMs: parsePositiveInt(
+      env.HEARTBEAT_INTERVAL_MS,
+      10_000,
+      "HEARTBEAT_INTERVAL_MS",
+    ),
   };
+}
+
+function parseSymbols(value: string | undefined): readonly string[] {
+  const raw = value === undefined || value === "" ? "BTCUSDT" : value;
+  const symbols = raw
+    .split(",")
+    .map((s) => s.trim().toUpperCase())
+    .filter((s) => s !== "");
+  if (symbols.length === 0) {
+    throw new Error(`SYMBOLS en az bir sembol içermeli, alınan: "${value}"`);
+  }
+  return symbols;
 }
 
 function parsePositiveInt(
