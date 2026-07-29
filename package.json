@@ -1,0 +1,20 @@
+{
+  "name": "trading-bot",
+  "version": "0.1.0",
+  "description": "Otomatik alım-satım botu — canlı runtime (TypeScript)",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.json",
+    "lint": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js"
+  },
+  "license": "UNLICENSED",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  }
+}

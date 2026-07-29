@@ -1,4 +1,37 @@
-# # Prompt: Otomatik Alım-Satım Botu (ABD Hisse · Kripto · Forex)
+# Prompt: Otomatik Alım-Satım Botu (ABD Hisse · Kripto · Forex)
+
+## Kurulum
+
+```bash
+npm install        # bağımlılıkları kur
+npm run build      # TypeScript derle
+npm test           # testleri çalıştır
+cp .env.example .env  # config'i düzenle (BOT_MODE varsayılan: DRY_RUN)
+npm start          # botu başlat
+```
+
+Proje yapısı (`src/`): `config/` (mod ayrımı DRY_RUN/PAPER/LIVE, venue seçimi),
+`market-data/` (WS yönetimi: reconnect + backoff + sessizlik algısı, REST
+snapshot resync, sequence boşluk tespiti, bayatlık algısı), `oms/` (emir durum
+makinesi, idempotent clientOrderId, OMS motoru: gönderim zaman aşımı →
+UNKNOWN → sorgula-ve-benimse, restart kurtarma, kısmi dolum politikası,
+append-only audit log), `strategy/` (hedef pozisyon → delta emir; LIVE'da
+Deflated Sharpe + PBO doğrulaması zorunlu), `risk/` (sert limitler, kill
+switch, pozisyon/PnL takibi, likidasyon tamponu izleme), `reconciliation/`
+(venue tek doğru kaynak; sapmada dur + alarm; ≤60sn periyodik), `state/`
+(kalıcı state store), `venues/` (adaptör arayüzü + Binance testnet adaptörü:
+imzalı REST, çekim izinli anahtarı reddetme, ağırlık bazlı rate limit +
+429/418 backoff; Alpaca paper adaptörü: piyasa saatleri + PDT koruması),
+`monitoring/` (mod damgalı JSON log, alarm yöneticisi, heartbeat, saat
+kayması, HTTP dashboard + uzaktan kill switch). Kill switch: `KILL_SWITCH`
+dosyasını oluşturmak yeterli (veya dashboard'dan `POST /kill`). Venue
+anahtarları `BINANCE_API_KEY` / `BINANCE_API_SECRET` (veya `ALPACA_API_KEY` /
+`ALPACA_API_SECRET`) environment değişkenlerinden okunur; anahtar yoksa bot
+çevrimdışı iskelet modunda kalır. Mod izolasyonu: yalnızca `LIVE` gerçek
+borsaya bağlanır, `PAPER` ve `DRY_RUN` her zaman testnet/paper ortamına
+gider. Kaos kabul testleri: `test/chaos.test.ts` (14 senaryo).
+
+---
 
 > Kullanım: bloğu Claude Code'a ver. Faz faz çalıştır.
 > Araştırma-önce versiyon için bkz. `PROMPT.md` — bu dosya onun canlı icra
