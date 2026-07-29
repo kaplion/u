@@ -1,4 +1,22 @@
-# # Prompt: Otomatik Alım-Satım Botu (ABD Hisse · Kripto · Forex)
+# Prompt: Otomatik Alım-Satım Botu (ABD Hisse · Kripto · Forex)
+
+## Kurulum
+
+```bash
+npm install        # bağımlılıkları kur
+npm run build      # TypeScript derle
+npm test           # testleri çalıştır
+cp .env.example .env  # config'i düzenle (BOT_MODE varsayılan: DRY_RUN)
+npm start          # botu başlat
+```
+
+Proje yapısı (`src/`): `config/` (mod ayrımı DRY_RUN/PAPER/LIVE),
+`market-data/` (bayatlık algısı), `oms/` (emir durum makinesi, idempotent
+clientOrderId), `risk/` (sert limitler, kill switch), `state/` (kalıcı state
+store), `venues/` (adaptör arayüzü), `monitoring/` (mod damgalı JSON log).
+Kill switch: `KILL_SWITCH` dosyasını oluşturmak yeterli.
+
+---
 
 > Kullanım: bloğu Claude Code'a ver. Faz faz çalıştır.
 > Araştırma-önce versiyon için bkz. `PROMPT.md` — bu dosya onun canlı icra
