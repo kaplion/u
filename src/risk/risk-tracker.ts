@@ -65,19 +65,22 @@ export class RiskTracker {
   }
 
   /** Sembol için mevcut notional (USD) — |pozisyon| × fiyat. */
-  symbolNotional(symbol: string, lastPrice: number): number {
+  symbolNotional(symbol: string, lastPrice: number, contractSize: number = 1): number {
     const pos = this.positions.get(symbol);
     if (pos === undefined) return 0;
     const price = lastPrice > 0 ? lastPrice : pos.avgPrice;
-    return Math.abs(pos.quantity) * price;
+    return Math.abs(pos.quantity) * price * contractSize;
   }
 
   /** Toplam brüt notional (USD). Fiyat bilinmeyen semboller avgPrice ile sayılır. */
-  grossNotional(priceOf: (symbol: string) => number | undefined): number {
+  grossNotional(
+    priceOf: (symbol: string) => number | undefined,
+    contractSizeOf: (symbol: string) => number = () => 1,
+  ): number {
     let total = 0;
     for (const [symbol, pos] of this.positions) {
       const price = priceOf(symbol) ?? pos.avgPrice;
-      total += Math.abs(pos.quantity) * price;
+      total += Math.abs(pos.quantity) * price * contractSizeOf(symbol);
     }
     return total;
   }

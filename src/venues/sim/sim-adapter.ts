@@ -1,6 +1,12 @@
 import type { Mode } from "../../config/mode.js";
 import type { Order } from "../../oms/order.js";
-import type { VenueAdapter, VenueBalance, VenuePosition } from "../venue-adapter.js";
+import type {
+  VenueAdapter,
+  VenueBalance,
+  VenuePosition,
+  VenuePriceTick,
+  VenueStatus,
+} from "../venue-adapter.js";
 
 /**
  * Simülasyon adaptörü — yalnızca DRY_RUN içindir.
@@ -55,5 +61,14 @@ export class SimVenueAdapter implements VenueAdapter {
 
   async fetchServerTime(): Promise<number> {
     return Date.now();
+  }
+
+  async fetchLatestPrices(symbols: readonly string[]): Promise<readonly VenuePriceTick[]> {
+    const at = Date.now();
+    return symbols.map((symbol) => ({ symbol, price: 100, at, marketOpen: true }));
+  }
+
+  async fetchVenueStatus(): Promise<VenueStatus> {
+    return { marketOpen: true };
   }
 }

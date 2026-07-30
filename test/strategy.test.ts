@@ -29,6 +29,7 @@ function makeDryRunOms(ctx: Partial<RiskContext> = {}) {
     alerts: new AlertManager(silentLogger),
     riskContext: () => ({
       mode: "DRY_RUN",
+      assetClass: "crypto",
       killSwitchActive: false,
       lastPrice: 100,
       dataStale: false,

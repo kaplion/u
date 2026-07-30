@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AlpacaAdapter,
+  alpacaDataBase,
   alpacaRestBase,
   createAlpacaAdapterFromEnv,
   mapAlpacaStatus,
@@ -111,6 +112,7 @@ describe("Faz 5 — connect hesabı doğrular", () => {
 describe("Faz 5 — piyasa saatleri zorunluluğu", () => {
   it("seans dışında emir REDDEDİLİR", async () => {
     const { adapter, requests } = makeAdapter([
+      { body: activeAccount },
       { body: { ...openClock, is_open: false } }, // clock: kapalı
     ]);
     await expect(adapter.submitOrder(baseOrder)).rejects.toThrow(/piyasa kapalı/);
@@ -120,6 +122,7 @@ describe("Faz 5 — piyasa saatleri zorunluluğu", () => {
 
   it("seans açıkken emir client_order_id ile gönderilir", async () => {
     const { adapter, requests } = makeAdapter([
+      { body: activeAccount },
       { body: openClock },
       { body: activeAccount },
       {
@@ -148,6 +151,7 @@ describe("Faz 5 — piyasa saatleri zorunluluğu", () => {
 describe("Faz 5 — PDT koruması", () => {
   it("hesap < $25k ve 3 gün-içi işlemde yeni emir gönderilmez", async () => {
     const { adapter, requests } = makeAdapter([
+      { body: activeAccount },
       { body: openClock },
       { body: { ...activeAccount, equity: "20000", daytrade_count: 3 } },
     ]);
@@ -155,8 +159,15 @@ describe("Faz 5 — PDT koruması", () => {
     expect(requests.filter((r) => r.method === "POST")).toHaveLength(0);
   });
 
+  it("trading_blocked hesapta emir doğrudan reddedilir", async () => {
+    const { adapter, requests } = makeAdapter([{ body: { ...activeAccount, trading_blocked: true } }]);
+    await expect(adapter.submitOrder(baseOrder)).rejects.toThrow(/bloke/);
+    expect(requests.filter((r) => r.method === "POST")).toHaveLength(0);
+  });
+
   it("hesap >= $25k ise PDT engeli yok", async () => {
     const { adapter } = makeAdapter([
+      { body: activeAccount },
       { body: openClock },
       { body: { ...activeAccount, equity: "26000", daytrade_count: 5 } },
       { body: { client_order_id: "bot-alp-1", symbol: "AAPL", side: "buy", qty: "10", filled_qty: "0", status: "accepted" } },
@@ -174,12 +185,13 @@ describe("Faz 5 — emir sorgusu ve iptal", () => {
 
   it("cancelOrder önce client_order_id ile bulur, sonra id ile siler", async () => {
     const { adapter, requests } = makeAdapter([
+      { body: activeAccount },
       { body: { id: "srv-9", client_order_id: "bot-alp-1", status: "new" } },
       { status: 204 },
     ]);
     await adapter.cancelOrder("bot-alp-1");
-    expect(requests[1]!.method).toBe("DELETE");
-    expect(requests[1]!.url).toContain("/v2/orders/srv-9");
+    expect(requests[2]!.method).toBe("DELETE");
+    expect(requests[2]!.url).toContain("/v2/orders/srv-9");
   });
 });
 
@@ -243,5 +255,59 @@ describe("Faz 5 — durum eşlemesi ve env fabrikası", () => {
     expect(positions).toEqual([{ symbol: "AAPL", quantity: 5 }]);
     const balances = await adapter.fetchBalances();
     expect(balances).toEqual([{ asset: "USD", free: 10_000, locked: 0 }]);
+  });
+
+  it("fraksiyonel adet ve fiyat tick size yuvarlaması korunur", async () => {
+    const { adapter, requests } = makeAdapter([
+      { body: activeAccount },
+      { body: openClock },
+      { body: { ...activeAccount, equity: "26000", daytrade_count: 0 } },
+      {
+        body: {
+          client_order_id: "bot-alp-1",
+          symbol: "AAPL",
+          side: "buy",
+          qty: "1.234568",
+          filled_qty: "0",
+          limit_price: "10.13",
+          status: "accepted",
+        },
+      },
+    ]);
+    await adapter.submitOrder({ ...baseOrder, quantity: 1.23456789, price: 10.129 });
+    const post = requests.find((r) => r.method === "POST");
+    expect(post?.body).toContain('"qty":"1.234568"');
+    expect(post?.body).toContain('"limit_price":"10.13"');
+  });
+
+  it("REST polling ile son işlemleri fiyat tick'ine çevirir", async () => {
+    const { adapter, requests } = makeAdapter([
+      {
+        body: {
+          trades: {
+            AAPL: { p: 200.12, t: "2024-01-02T15:00:00Z" },
+          },
+        },
+      },
+    ]);
+    const ticks = await adapter.fetchLatestPrices!(["AAPL"]);
+    expect(ticks).toEqual([
+      { symbol: "AAPL", price: 200.12, at: new Date("2024-01-02T15:00:00Z").getTime(), marketOpen: true },
+    ]);
+    expect(requests[0]?.url).toContain(alpacaDataBase());
+  });
+
+  it("venue status piyasa açıklığı ve PDT görünürlüğü döner", async () => {
+    const { adapter } = makeAdapter([
+      { body: { ...activeAccount, daytrade_count: 2, pattern_day_trader: true } },
+      { body: openClock },
+    ]);
+    await expect(adapter.fetchVenueStatus?.()).resolves.toEqual({
+      marketOpen: true,
+      accountBlocked: false,
+      tradingBlocked: false,
+      dayTradeCount: 2,
+      patternDayTrader: true,
+    });
   });
 });

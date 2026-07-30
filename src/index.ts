@@ -7,6 +7,7 @@ import { StateStore } from "./state/state-store.js";
 import { StalenessDetector } from "./market-data/staleness.js";
 import { createBinanceAdapterFromEnv } from "./venues/binance/binance-adapter.js";
 import { createAlpacaAdapterFromEnv } from "./venues/alpaca/alpaca-adapter.js";
+import { createIgAdapterFromEnv } from "./venues/ig/ig-adapter.js";
 import { SimVenueAdapter } from "./venues/sim/sim-adapter.js";
 import type { VenueAdapter } from "./venues/venue-adapter.js";
 
@@ -25,12 +26,15 @@ export function createAdapter(
   const adapter =
     config.venue === "alpaca"
       ? createAlpacaAdapterFromEnv(config.mode, logger, env)
-      : createBinanceAdapterFromEnv(config.mode, logger, env);
+      : config.venue === "ig"
+        ? createIgAdapterFromEnv(config.mode, logger, env)
+        : createBinanceAdapterFromEnv(config.mode, logger, env);
   if (adapter !== undefined) return adapter;
   if (config.mode === "DRY_RUN") {
     logger.warn("venue anahtarı yok — DRY_RUN simülasyon adaptörü ile başlanıyor", {
       venue: config.venue,
-      hint: "gerçek venue için BINANCE_API_KEY/BINANCE_API_SECRET (veya ALPACA_*) tanımla",
+      hint:
+        "gerçek venue için BINANCE_API_KEY/BINANCE_API_SECRET, ALPACA_* veya IG_* tanımla",
     });
     return new SimVenueAdapter(config.mode);
   }

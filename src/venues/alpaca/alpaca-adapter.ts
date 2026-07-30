@@ -4,7 +4,9 @@ import type { Order, OrderSide, OrderState } from "../../oms/order.js";
 import type {
   VenueAdapter,
   VenueBalance,
+  VenuePriceTick,
   VenuePosition,
+  VenueStatus,
 } from "../venue-adapter.js";
 
 /**
@@ -13,6 +15,10 @@ import type {
  */
 export function alpacaRestBase(mode: Mode): string {
   return mode === "LIVE" ? "https://api.alpaca.markets" : "https://paper-api.alpaca.markets";
+}
+
+export function alpacaDataBase(): string {
+  return "https://data.alpaca.markets";
 }
 
 export type AlpacaFetchLike = (
@@ -45,6 +51,12 @@ interface AlpacaAccount {
   daytrade_count?: number;
   equity?: string;
   cash?: string;
+}
+
+interface AlpacaPosition {
+  symbol: string;
+  qty: string;
+  avg_entry_price?: string;
 }
 
 interface AlpacaClock {
@@ -154,12 +166,19 @@ export class AlpacaAdapter implements VenueAdapter {
   }
 
   async fetchPositions(): Promise<readonly VenuePosition[]> {
-    const positions = await this.request<{ symbol: string; qty: string }[]>(
+    const positions = await this.request<AlpacaPosition[]>(
       "GET",
       "/v2/positions",
     );
     return positions
-      .map((p) => ({ symbol: p.symbol, quantity: Number(p.qty) }))
+      .map((p) => {
+        const avgPrice = Number(p.avg_entry_price ?? 0);
+        return {
+          symbol: p.symbol,
+          quantity: Number(p.qty),
+          ...(avgPrice > 0 ? { avgPrice } : {}),
+        };
+      })
       .filter((p) => p.quantity !== 0);
   }
 
@@ -177,19 +196,20 @@ export class AlpacaAdapter implements VenueAdapter {
   /** client_order_id ile idempotent gönderim + seans ve PDT korumaları. */
   async submitOrder(order: Order): Promise<Order> {
     this.assertOrderingAllowed("emir gönderimi");
+    await this.assertTradableAccount();
     await this.assertMarketOpen();
     await this.assertPdtAllows();
 
     const body: Record<string, unknown> = {
       symbol: order.symbol,
       side: order.side.toLowerCase(),
-      qty: String(order.quantity),
+      qty: formatDecimal(roundQuantity(order.quantity)),
       type: order.price !== undefined ? "limit" : "market",
       time_in_force: "day",
       client_order_id: order.clientOrderId,
       extended_hours: this.options.allowExtendedHours === true,
     };
-    if (order.price !== undefined) body.limit_price = String(order.price);
+    if (order.price !== undefined) body.limit_price = formatDecimal(roundEquityPrice(order.price));
 
     const res = await this.request<AlpacaOrder>("POST", "/v2/orders", JSON.stringify(body));
     return this.toOrder(res, order);
@@ -213,6 +233,7 @@ export class AlpacaAdapter implements VenueAdapter {
 
   async cancelOrder(clientOrderId: string): Promise<void> {
     this.assertOrderingAllowed("emir iptali");
+    await this.assertTradableAccount();
     const existing = await this.request<AlpacaOrder>(
       "GET",
       `/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientOrderId)}`,
@@ -221,6 +242,48 @@ export class AlpacaAdapter implements VenueAdapter {
       throw new Error("iptal edilecek emir venue'da bulunamadı");
     }
     await this.request("DELETE", `/v2/orders/${encodeURIComponent(existing.id)}`);
+  }
+
+  async fetchLatestPrices(symbols: readonly string[]): Promise<readonly VenuePriceTick[]> {
+    if (symbols.length === 0) return [];
+    const response = await this.fetchFn(
+      `${alpacaDataBase()}/v2/stocks/trades/latest?symbols=${encodeURIComponent(symbols.join(","))}`,
+      {
+        method: "GET",
+        headers: {
+          "APCA-API-KEY-ID": this.options.apiKey,
+          "APCA-API-SECRET-KEY": this.options.apiSecret,
+        },
+      },
+    );
+    if (response.status < 200 || response.status >= 300) {
+      throw new AlpacaHttpError(response.status, undefined, "/v2/stocks/trades/latest");
+    }
+    const body = (await response.json()) as {
+      trades?: Record<string, { p?: number; t?: string }>;
+    };
+    return Object.entries(body.trades ?? {})
+      .map(([symbol, trade]) => ({
+        symbol,
+        price: Number(trade.p ?? 0),
+        at: trade.t !== undefined ? new Date(trade.t).getTime() : Date.now(),
+        marketOpen: true,
+      }))
+      .filter((tick) => Number.isFinite(tick.price) && tick.price > 0);
+  }
+
+  async fetchVenueStatus(): Promise<VenueStatus> {
+    const [account, clock] = await Promise.all([
+      this.request<AlpacaAccount>("GET", "/v2/account"),
+      this.request<AlpacaClock>("GET", "/v2/clock"),
+    ]);
+    return {
+      marketOpen: this.options.allowExtendedHours === true ? true : clock.is_open === true,
+      accountBlocked: account.account_blocked === true,
+      tradingBlocked: account.trading_blocked === true || account.status === "ACCOUNT_BLOCKED",
+      dayTradeCount: account.daytrade_count ?? 0,
+      patternDayTrader: account.pattern_day_trader ?? false,
+    };
   }
 
   private assertOrderingAllowed(action: string): void {
@@ -247,6 +310,13 @@ export class AlpacaAdapter implements VenueAdapter {
       throw new Error(
         `PDT koruması: hesap ${equity} USD < 25k ve gün-içi işlem sayısı ${daytrades} >= 3 — yeni emir gönderilmez`,
       );
+    }
+  }
+
+  private async assertTradableAccount(): Promise<void> {
+    const account = await this.request<AlpacaAccount>("GET", "/v2/account");
+    if (account.account_blocked === true || account.trading_blocked === true) {
+      throw new Error("Alpaca hesabı işlem için bloke — runtime durdurulmalı");
     }
   }
 
@@ -325,5 +395,29 @@ export function createAlpacaAdapterFromEnv(
   if (apiKey === undefined || apiKey === "" || apiSecret === undefined || apiSecret === "") {
     return undefined;
   }
-  return new AlpacaAdapter({ mode, apiKey, apiSecret, logger });
+  return new AlpacaAdapter({
+    mode,
+    apiKey,
+    apiSecret,
+    logger,
+    allowExtendedHours: parseBoolean(env.ALLOW_EXTENDED_HOURS),
+  });
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  return value === "1" || value === "true";
+}
+
+function roundQuantity(quantity: number): number {
+  return Math.round(quantity * 1_000_000) / 1_000_000;
+}
+
+function roundEquityPrice(price: number): number {
+  const decimals = price >= 1 ? 2 : 4;
+  const factor = 10 ** decimals;
+  return Math.round(price * factor) / factor;
+}
+
+function formatDecimal(value: number): string {
+  return value.toFixed(6).replace(/\.?0+$/, "");
 }

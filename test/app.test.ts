@@ -10,7 +10,9 @@ import { KillSwitch } from "../src/risk/kill-switch.js";
 import { StateStore } from "../src/state/state-store.js";
 import { StalenessDetector } from "../src/market-data/staleness.js";
 import type { Order } from "../src/oms/order.js";
+import { symbolSpecForVenueSymbol } from "../src/venues/asset-class.js";
 import type { VenueAdapter, VenueBalance, VenuePosition } from "../src/venues/venue-adapter.js";
+import type { VenueStatus } from "../src/venues/venue-adapter.js";
 
 const silentLogger = new Logger("PAPER", () => {});
 
@@ -18,6 +20,7 @@ class FakeVenue implements VenueAdapter {
   readonly name = "fake";
   positions: VenuePosition[] = [];
   connectRejects = false;
+  venueStatus: VenueStatus = {};
 
   async connect(): Promise<void> {
     if (this.connectRejects) throw new Error("çekim izni var");
@@ -41,11 +44,15 @@ class FakeVenue implements VenueAdapter {
   async fetchServerTime(): Promise<number> {
     return Date.now();
   }
+  async fetchVenueStatus(): Promise<VenueStatus> {
+    return this.venueStatus;
+  }
 }
 
 class FakeFeed implements FeedLike {
   started = false;
   stopped = false;
+  prices = new Map<string, { symbol: string; price: number; at: number }>();
   start(): void {
     this.started = true;
   }
@@ -55,10 +62,19 @@ class FakeFeed implements FeedLike {
   isConnected(): boolean {
     return this.started && !this.stopped;
   }
+  lastPrice(symbol: string): { symbol: string; price: number; at: number } | undefined {
+    return this.prices.get(symbol);
+  }
 }
 
 const dirs: string[] = [];
-function setup(opts: { adapter?: VenueAdapter | undefined; killSwitchOn?: boolean } = {}) {
+function setup(
+  opts: {
+    adapter?: VenueAdapter | undefined;
+    killSwitchOn?: boolean;
+    configOverride?: Partial<Config>;
+  } = {},
+) {
   const dir = mkdtempSync(join(tmpdir(), "app-test-"));
   dirs.push(dir);
   const killSwitchFile = join(dir, "KILL_SWITCH");
@@ -66,16 +82,22 @@ function setup(opts: { adapter?: VenueAdapter | undefined; killSwitchOn?: boolea
   const config: Config = {
     mode: "PAPER",
     venue: "binance",
+    assetClass: "crypto",
     killSwitchFile,
     stateDir: join(dir, "state"),
     staleDataThresholdMs: 15_000,
     symbols: ["BTCUSDT"],
+    symbolSpecs: [symbolSpecForVenueSymbol("BTCUSDT", "binance")],
     reconcileIntervalMs: 60_000,
     heartbeatIntervalMs: 10_000,
     orderTimeoutMs: 5_000,
     partialFillTimeoutMs: 30_000,
     dashboardPort: 0,
     dashboardHost: "127.0.0.1",
+    marketDataPollIntervalMs: 5_000,
+    forexMarginUsageLimit: 0.5,
+    forexMarginAlertThreshold: 0.4,
+    ...opts.configOverride,
   };
   const alertsReceived: Alert[] = [];
   const feed = new FakeFeed();
@@ -146,6 +168,35 @@ describe("App", () => {
     const { app, feed } = setup({ adapter: venue });
     await expect(app.start()).rejects.toThrow(/çekim izni/);
     expect(feed.started).toBe(false);
+    app.stop();
+  });
+
+  it("/status için asset class, marketOpen ve forex margin görünürlüğünü üretir", async () => {
+    const venue = new FakeVenue();
+    venue.venueStatus = { marketOpen: true, marginUsage: 0.25, marginLevel: 400, swapCost: -1.5 };
+    const { app, feed } = setup({
+      adapter: venue,
+      configOverride: {
+        venue: "ig",
+        assetClass: "forex",
+        symbols: ["EURUSD"],
+        symbolSpecs: [symbolSpecForVenueSymbol("EURUSD", "ig")],
+      },
+    });
+    feed.prices.set("EURUSD", { symbol: "EURUSD", price: 1.1, at: Date.now() });
+    await app.start();
+    const status = (app as unknown as { status: (strategy: { name: string }) => Record<string, unknown> }).status({
+      name: "hold",
+    });
+    expect(status.assetClass).toBe("forex");
+    expect(status.marketOpen).toBe(true);
+    expect(status.forex).toEqual(
+      expect.objectContaining({
+        marginUsage: 0.25,
+        marginLevel: 400,
+        swapCost: -1.5,
+      }),
+    );
     app.stop();
   });
 });

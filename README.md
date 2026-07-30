@@ -12,26 +12,68 @@ npm start          # botu başlat
 
 Proje yapısı (`src/`): `config/` (mod ayrımı DRY_RUN/PAPER/LIVE, venue seçimi),
 `market-data/` (WS yönetimi: reconnect + backoff + sessizlik algısı, REST
-snapshot resync, sequence boşluk tespiti, bayatlık algısı), `oms/` (emir durum
+snapshot resync, sequence boşluk tespiti, bayatlık algısı; Alpaca/IG için REST
+polling feed), `oms/` (emir durum
 makinesi, idempotent clientOrderId, OMS motoru: gönderim zaman aşımı →
 UNKNOWN → sorgula-ve-benimse, restart kurtarma, kısmi dolum politikası,
 append-only audit log), `strategy/` (hedef pozisyon → delta emir; LIVE'da
 Deflated Sharpe + PBO doğrulaması zorunlu), `risk/` (sert limitler, kill
-switch, pozisyon/PnL takibi, likidasyon tamponu izleme), `reconciliation/`
+switch, pozisyon/PnL takibi, likidasyon tamponu izleme, forex margin/pip/lot
+korumaları), `reconciliation/`
 (venue tek doğru kaynak; sapmada dur + alarm; ≤60sn periyodik), `state/`
 (kalıcı state store), `venues/` (adaptör arayüzü + Binance testnet adaptörü:
 imzalı REST, çekim izinli anahtarı reddetme, ağırlık bazlı rate limit +
-429/418 backoff; Alpaca paper adaptörü: piyasa saatleri + PDT koruması),
+429/418 backoff; Alpaca adaptörü: piyasa saatleri + PDT koruması; IG adaptörü:
+oturum token yenileme + dealReference teyidi + demo/canlı izolasyonu),
 `monitoring/` (mod damgalı JSON log, alarm yöneticisi, heartbeat, saat
 kayması, HTTP dashboard + uzaktan kill switch). Kill switch: `KILL_SWITCH`
 dosyasını oluşturmak yeterli (veya dashboard'dan `POST /kill`). Venue
-anahtarları `BINANCE_API_KEY` / `BINANCE_API_SECRET` (veya `ALPACA_API_KEY` /
-`ALPACA_API_SECRET`) environment değişkenlerinden okunur. Anahtar yoksa:
+anahtarları `BINANCE_API_KEY` / `BINANCE_API_SECRET`, `ALPACA_API_KEY` /
+`ALPACA_API_SECRET` veya `IG_API_KEY` / `IG_USERNAME` / `IG_PASSWORD` /
+`IG_ACCOUNT_ID` environment değişkenlerinden okunur. Anahtar yoksa:
 `DRY_RUN` modunda bot simülasyon adaptörüyle (ağ çağrısı yok, emir gönderimi
 yok) yine de ayağa kalkar; `PAPER`/`LIVE` modunda çevrimdışı iskelet modunda
 kalır. Mod izolasyonu: yalnızca `LIVE` gerçek
 borsaya bağlanır, `PAPER` ve `DRY_RUN` her zaman testnet/paper ortamına
 gider. Kaos kabul testleri: `test/chaos.test.ts` (14 senaryo).
+
+---
+
+## Venue ve ortam değişkenleri
+
+| Venue | Asset class | Gerekli env |
+| --- | --- | --- |
+| `binance` | `crypto` | `BINANCE_API_KEY`, `BINANCE_API_SECRET` |
+| `alpaca` | `us_equity` | `ALPACA_API_KEY`, `ALPACA_API_SECRET` |
+| `ig` | `forex` | `IG_API_KEY`, `IG_USERNAME`, `IG_PASSWORD`, `IG_ACCOUNT_ID` |
+
+Ek ayarlar:
+- `SYMBOLS` — virgülle ayrılmış semboller. Forex için `EUR/USD` ve `EURUSD`
+  aynı kanonik `EURUSD` formuna iner.
+- `MARKET_DATA_POLL_INTERVAL_MS` — Alpaca/IG REST polling aralığı.
+- `FOREX_MARGIN_USAGE_LIMIT` / `FOREX_MARGIN_ALERT_THRESHOLD` — forex margin
+  koruması.
+- `ALLOW_EXTENDED_HOURS=true` — Alpaca için yalnızca istenirse uzatılmış seans.
+
+Örnekler:
+
+```bash
+# Kripto
+VENUE=binance SYMBOLS=BTCUSDT npm start
+
+# ABD hissesi (paper)
+VENUE=alpaca BOT_MODE=PAPER SYMBOLS=AAPL,MSFT \
+ALPACA_API_KEY=... ALPACA_API_SECRET=... npm start
+
+# Forex (IG demo)
+VENUE=ig BOT_MODE=PAPER SYMBOLS=EUR/USD,GBPUSD \
+IG_API_KEY=... IG_USERNAME=... IG_PASSWORD=... IG_ACCOUNT_ID=... npm start
+```
+
+IG ile başlamak için kısa yol: önce IG demo hesabı aç, demo API key üret,
+ardından yukarıdaki dört environment değişkenini tanımla. `PAPER` ve
+`DRY_RUN` modları her zaman demo host'una bağlanır; `LIVE` dışında gerçek para
+ortamına gidilmez.
 
 ---
 
@@ -71,7 +113,7 @@ hiç çalışmayan bir bottan çok daha pahalıdır.
 │ OMS                  emir yaşam döngüsü · idempotency         │
 │                      kısmi dolum · retry · timeout            │
 ├──────────────────────────────────────────────────────────────┤
-│ VENUE ADAPTÖRLERİ    Binance · Alpaca · OANDA · IBKR          │
+│ VENUE ADAPTÖRLERİ    Binance · Alpaca · IG                    │
 │                      her venue'nin emir semantiği farklı      │
 ├──────────────────────────────────────────────────────────────┤
 │ STATE STORE          kalıcı · restart'ta kurtarılabilir       │
@@ -202,7 +244,7 @@ minimum notional, tick/lot kuantizasyonu.
 - Çıkış emirlerinde `reduceOnly` kullan — yanlışlıkla ters pozisyon açmayı önler
 - Venue parçalanması: fiyat borsadan borsaya farklı
 
-### Forex (OANDA / IBKR)
+### Forex (IG)
 - **Hafta sonu kapanışı** — Cuma 17:00 ET. Pozisyon taşıyacaksan gap riskini
   kabul ediyorsun demektir; karar açıkça yazılsın.
 - **Rollover 17:00 ET**, Çarşamba üç katı
@@ -281,8 +323,10 @@ Faz 4'ten önce zorunlu. Aşağıdaki kabul kriterlerinin hepsi geçmeli.
 **Faz 4 — `PAPER` mod, gerçek testnet emirleri**
 En az 2 hafta kesintisiz. Rekonsiliasyon sapması sıfır olmalı.
 
-**Faz 5 — İkinci venue (hisse veya forex)**
-Adaptör soyutlamasının gerçekten soyut olup olmadığını burada öğrenirsin.
+**Faz 5 — Çoklu venue (hisse + forex)**
+Adaptör soyutlamasının gerçekten soyut olup olmadığını burada öğrenirsin:
+Binance (crypto), Alpaca (ABD hissesi) ve IG (forex) aynı OMS/risk/runtime
+zincirinden geçer.
 
 **Faz 6 — `LIVE`, kanarya boyut**
 Kaybetmeyi göze aldığın miktarın küçük bir kısmıyla. Ölçek ancak paper ile
