@@ -7,12 +7,34 @@ import { StateStore } from "./state/state-store.js";
 import { StalenessDetector } from "./market-data/staleness.js";
 import { createBinanceAdapterFromEnv } from "./venues/binance/binance-adapter.js";
 import { createAlpacaAdapterFromEnv } from "./venues/alpaca/alpaca-adapter.js";
+import { SimVenueAdapter } from "./venues/sim/sim-adapter.js";
 import type { VenueAdapter } from "./venues/venue-adapter.js";
 
-function createAdapter(config: Config, logger: Logger): VenueAdapter | undefined {
-  return config.venue === "alpaca"
-    ? createAlpacaAdapterFromEnv(config.mode, logger)
-    : createBinanceAdapterFromEnv(config.mode, logger);
+/**
+ * Adaptör seçimi. Anahtar yoksa:
+ * - DRY_RUN: simülasyon adaptörü ile runtime yine de ayağa kalkar (emir
+ *   gönderilmez, ağ çağrısı yapılmaz) — bot sessizce kapanmaz.
+ * - PAPER/LIVE: adaptör yok; bot çevrimdışı iskelet modunda kalır, çünkü
+ *   gerçek venue olmadan gerçek emir yaşam döngüsü taklit edilemez.
+ */
+export function createAdapter(
+  config: Config,
+  logger: Logger,
+  env: NodeJS.ProcessEnv = process.env,
+): VenueAdapter | undefined {
+  const adapter =
+    config.venue === "alpaca"
+      ? createAlpacaAdapterFromEnv(config.mode, logger, env)
+      : createBinanceAdapterFromEnv(config.mode, logger, env);
+  if (adapter !== undefined) return adapter;
+  if (config.mode === "DRY_RUN") {
+    logger.warn("venue anahtarı yok — DRY_RUN simülasyon adaptörü ile başlanıyor", {
+      venue: config.venue,
+      hint: "gerçek venue için BINANCE_API_KEY/BINANCE_API_SECRET (veya ALPACA_*) tanımla",
+    });
+    return new SimVenueAdapter(config.mode);
+  }
+  return undefined;
 }
 
 /**

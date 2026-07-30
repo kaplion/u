@@ -26,8 +26,10 @@ imzalı REST, çekim izinli anahtarı reddetme, ağırlık bazlı rate limit +
 kayması, HTTP dashboard + uzaktan kill switch). Kill switch: `KILL_SWITCH`
 dosyasını oluşturmak yeterli (veya dashboard'dan `POST /kill`). Venue
 anahtarları `BINANCE_API_KEY` / `BINANCE_API_SECRET` (veya `ALPACA_API_KEY` /
-`ALPACA_API_SECRET`) environment değişkenlerinden okunur; anahtar yoksa bot
-çevrimdışı iskelet modunda kalır. Mod izolasyonu: yalnızca `LIVE` gerçek
+`ALPACA_API_SECRET`) environment değişkenlerinden okunur. Anahtar yoksa:
+`DRY_RUN` modunda bot simülasyon adaptörüyle (ağ çağrısı yok, emir gönderimi
+yok) yine de ayağa kalkar; `PAPER`/`LIVE` modunda çevrimdışı iskelet modunda
+kalır. Mod izolasyonu: yalnızca `LIVE` gerçek
 borsaya bağlanır, `PAPER` ve `DRY_RUN` her zaman testnet/paper ortamına
 gider. Kaos kabul testleri: `test/chaos.test.ts` (14 senaryo).
 
