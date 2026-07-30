@@ -36,7 +36,7 @@ hiç çalışmayan bir bottan çok daha pahalıdır.
 │ OMS                  emir yaşam döngüsü · idempotency         │
 │                      kısmi dolum · retry · timeout            │
 ├──────────────────────────────────────────────────────────────┤
-│ VENUE ADAPTÖRLERİ    Binance · Alpaca · OANDA · IBKR          │
+│ VENUE ADAPTÖRLERİ    Binance · Alpaca · IG                    │
 │                      her venue'nin emir semantiği farklı      │
 ├──────────────────────────────────────────────────────────────┤
 │ STATE STORE          kalıcı · restart'ta kurtarılabilir       │
@@ -167,7 +167,7 @@ minimum notional, tick/lot kuantizasyonu.
 - Çıkış emirlerinde `reduceOnly` kullan — yanlışlıkla ters pozisyon açmayı önler
 - Venue parçalanması: fiyat borsadan borsaya farklı
 
-### Forex (OANDA / IBKR)
+### Forex (IG)
 - **Hafta sonu kapanışı** — Cuma 17:00 ET. Pozisyon taşıyacaksan gap riskini
   kabul ediyorsun demektir; karar açıkça yazılsın.
 - **Rollover 17:00 ET**, Çarşamba üç katı
@@ -246,8 +246,10 @@ Faz 4'ten önce zorunlu. Aşağıdaki kabul kriterlerinin hepsi geçmeli.
 **Faz 4 — `PAPER` mod, gerçek testnet emirleri**
 En az 2 hafta kesintisiz. Rekonsiliasyon sapması sıfır olmalı.
 
-**Faz 5 — İkinci venue (hisse veya forex)**
-Adaptör soyutlamasının gerçekten soyut olup olmadığını burada öğrenirsin.
+**Faz 5 — Çoklu venue (hisse + forex)**
+Adaptör soyutlamasının gerçekten soyut olup olmadığını burada öğrenirsin:
+Binance (crypto), Alpaca (ABD hissesi) ve IG (forex) aynı OMS/risk/runtime
+zincirinden geçer.
 
 **Faz 6 — `LIVE`, kanarya boyut**
 Kaybetmeyi göze aldığın miktarın küçük bir kısmıyla. Ölçek ancak paper ile

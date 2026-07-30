@@ -99,6 +99,7 @@ class ChaosVenue implements VenueAdapter {
 function baseCtx(overrides: Partial<RiskContext> = {}): RiskContext {
   return {
     mode: "PAPER",
+    assetClass: "crypto",
     killSwitchActive: false,
     lastPrice: 100,
     dataStale: false,

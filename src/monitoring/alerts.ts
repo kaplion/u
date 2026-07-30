@@ -9,6 +9,8 @@ export type AlertKind =
   | "clock_drift"
   | "rate_limited"
   | "order_unknown"
+  | "order_rejected"
+  | "margin_warning"
   | "liquidation_buffer"
   | "daily_loss_limit"
   | "fatal";

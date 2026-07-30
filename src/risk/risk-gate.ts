@@ -1,5 +1,7 @@
 import type { Mode } from "../config/mode.js";
 import type { Order } from "../oms/order.js";
+import type { AssetClass } from "../venues/asset-class.js";
+import { orderNotional } from "../venues/asset-class.js";
 
 /**
  * Sert limitler KOD İÇİNDE tanımlıdır, config'de değil — atlanabilir bir
@@ -27,8 +29,16 @@ export const HARD_LIMITS = {
 export interface RiskContext {
   /** Çalışma modu — LIVE'da kanarya tavanı devreye girer. */
   readonly mode: Mode;
+  /** Sembolün varlık sınıfı. */
+  readonly assetClass: AssetClass;
+  /** Sembol notional hesabı için kontrat boyutu. */
+  readonly contractSize?: number;
+  /** Forex için pip boyu görünürlüğü. */
+  readonly pipSize?: number;
   /** Kill switch aktif mi (dışarıdan tetiklenir). */
   readonly killSwitchActive: boolean;
+  /** Piyasa açık mı. Forex ve hisse için seans koruması. */
+  readonly marketOpen?: boolean;
   /** Son bilinen piyasa fiyatı (fiyat sanity için). */
   readonly lastPrice: number;
   /** Piyasa verisi bayat mı. */
@@ -41,6 +51,10 @@ export interface RiskContext {
   readonly dailyLoss: number;
   /** Son bir dakikada gönderilen emir sayısı. */
   readonly ordersLastMinute: number;
+  /** Forex margin kullanımı (0..1). */
+  readonly marginUsage?: number;
+  /** Forex margin kullanım tavanı (0..1). */
+  readonly marginUsageLimit?: number;
 }
 
 export type RiskDecision =
@@ -55,6 +69,10 @@ export function checkOrder(order: Order, ctx: RiskContext): RiskDecision {
   // Kill switch: yeni riske izin yok ama pozisyon azaltan emirler geçer.
   if (ctx.killSwitchActive && !order.reduceOnly) {
     return deny("kill switch aktif — yalnızca reduceOnly emirler geçer");
+  }
+
+  if (ctx.marketOpen === false && !order.reduceOnly) {
+    return deny("piyasa kapalı — yeni emir gönderilmez");
   }
 
   if (ctx.dataStale) {
@@ -81,7 +99,26 @@ export function checkOrder(order: Order, ctx: RiskContext): RiskDecision {
     }
   }
 
-  const notional = order.quantity * price;
+  if (
+    ctx.assetClass === "forex" &&
+    ctx.marginUsage !== undefined &&
+    ctx.marginUsageLimit !== undefined &&
+    ctx.marginUsage >= ctx.marginUsageLimit &&
+    !order.reduceOnly
+  ) {
+    return deny(
+      `margin kullanım eşiği aşıldı (${ctx.marginUsage.toFixed(3)} >= ${ctx.marginUsageLimit.toFixed(3)})`,
+    );
+  }
+
+  const notional = orderNotional(order.quantity, price, {
+    symbol: order.symbol,
+    assetClass: ctx.assetClass,
+    contractSize: ctx.contractSize ?? 1,
+    tickSize: 0.01,
+    lotStep: 1,
+    ...(ctx.pipSize !== undefined ? { pipSize: ctx.pipSize } : {}),
+  });
   if (!Number.isFinite(notional) || notional <= 0) {
     return deny(`geçersiz notional: ${notional}`);
   }

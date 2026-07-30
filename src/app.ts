@@ -10,12 +10,14 @@ import { RiskTracker } from "./risk/risk-tracker.js";
 import { StateStore } from "./state/state-store.js";
 import { StalenessDetector } from "./market-data/staleness.js";
 import { MarketDataFeed, type PriceTick } from "./market-data/market-data-feed.js";
+import { PollingMarketDataFeed } from "./market-data/polling-market-data-feed.js";
 import { AuditLog } from "./oms/audit-log.js";
 import { Oms } from "./oms/oms.js";
 import type { Order } from "./oms/order.js";
 import { Reconciler } from "./reconciliation/reconciler.js";
 import { HoldStrategy, StrategyRunner, type Strategy } from "./strategy/strategy.js";
-import type { VenueAdapter } from "./venues/venue-adapter.js";
+import { forexPipValue, type SymbolSpec } from "./venues/asset-class.js";
+import type { VenueAdapter, VenueStatus } from "./venues/venue-adapter.js";
 import { binanceRestBase, binanceStreamBase } from "./venues/binance/binance-adapter.js";
 
 /** Feed'in App tarafından kullanılan yüzeyi — testte sahtesi enjekte edilebilir. */
@@ -62,7 +64,9 @@ export class App {
   private dashboard: Dashboard | undefined;
   private heartbeatTimer: ReturnType<typeof setInterval> | undefined;
   private dailyLossAlerted = false;
+  private marginAlerted = false;
   private readonly startedAt = Date.now();
+  private venueStatus: VenueStatus = {};
 
   constructor(private readonly deps: AppDeps) {
     this.heartbeat = new Heartbeat(deps.stateStore);
@@ -115,17 +119,7 @@ export class App {
     // 4) Periyodik rekonsiliasyon (≤60sn) + market data.
     this.reconciler.start(config.reconcileIntervalMs);
 
-    this.feed =
-      this.deps.feed ??
-      new MarketDataFeed({
-        symbols: config.symbols,
-        streamBase: binanceStreamBase(config.mode),
-        restBase: binanceRestBase(config.mode),
-        logger,
-        alerts,
-        staleness,
-        heartbeatTimeoutMs: config.staleDataThresholdMs,
-      });
+    this.feed = this.deps.feed ?? this.createFeed();
     this.feed.start();
 
     // 5) Faz 2+ — OMS + risk kapısı. DRY_RUN'da emirler üretilir ve
@@ -146,6 +140,10 @@ export class App {
       orderTimeoutMs: config.orderTimeoutMs,
       partialFillTimeoutMs: config.partialFillTimeoutMs,
     });
+    for (const position of await adapter.fetchPositions()) {
+      this.riskTracker.seedPosition(position.symbol, position.quantity, position.avgPrice ?? 0);
+    }
+    await this.refreshVenueStatus();
     // Restart kurtarma: terminal olmayan emirler venue'ya SORULUR —
     // asla yeniden gönderilmez, asla varsayılmaz.
     await this.oms.recover();
@@ -191,6 +189,7 @@ export class App {
 
   private async tick(): Promise<void> {
     const { config, alerts, staleness } = this.deps;
+    await this.refreshVenueStatus();
 
     this.heartbeat.beat({
       mode: config.mode,
@@ -212,6 +211,29 @@ export class App {
         dailyLoss,
         limit: HARD_LIMITS.maxDailyLoss,
       });
+    }
+
+    if (
+      this.venueStatus.marginUsage !== undefined &&
+      this.venueStatus.marginUsage >= config.forexMarginAlertThreshold &&
+      !this.marginAlerted
+    ) {
+      this.marginAlerted = true;
+      alerts.raise("margin_warning", "forex margin kullanımı alarm eşiğine yaklaştı", {
+        marginUsage: this.venueStatus.marginUsage,
+        threshold: config.forexMarginAlertThreshold,
+      });
+    }
+    if (
+      this.venueStatus.accountBlocked === true ||
+      this.venueStatus.tradingBlocked === true
+    ) {
+      alerts.raise("fatal", "venue hesabı işlem için bloke — runtime durduruluyor", {
+        accountBlocked: this.venueStatus.accountBlocked ?? false,
+        tradingBlocked: this.venueStatus.tradingBlocked ?? false,
+      });
+      this.stop();
+      return;
     }
 
     // OMS bakımı: UNKNOWN çözümü, venue emir senkronu, kısmi dolum kararı.
@@ -248,18 +270,30 @@ export class App {
     const { config, killSwitch, staleness } = this.deps;
     const tracker = this.riskTracker ?? new RiskTracker();
     const lastPrice = this.feed?.lastPrice?.(order.symbol)?.price ?? 0;
+    const spec = this.symbolSpec(order.symbol);
     tracker.recordOrderAttempt();
     return {
       mode: config.mode,
+      assetClass: spec.assetClass,
+      contractSize: spec.contractSize,
       killSwitchActive: killSwitch.isActive() || this.reconciler?.isHalted() === true,
       lastPrice,
       dataStale: staleness.isStale(),
-      currentSymbolNotional: tracker.symbolNotional(order.symbol, lastPrice),
+      currentSymbolNotional: tracker.symbolNotional(order.symbol, lastPrice, spec.contractSize),
       currentGrossNotional: tracker.grossNotional(
         (s) => this.feed?.lastPrice?.(s)?.price,
+        (s) => this.symbolSpec(s).contractSize,
       ),
       dailyLoss: tracker.dailyLoss(),
       ordersLastMinute: tracker.ordersLastMinute(),
+      marginUsageLimit: config.forexMarginUsageLimit,
+      ...(spec.pipSize !== undefined ? { pipSize: spec.pipSize } : {}),
+      ...(this.venueStatus.marketOpen !== undefined
+        ? { marketOpen: this.venueStatus.marketOpen }
+        : {}),
+      ...(this.venueStatus.marginUsage !== undefined
+        ? { marginUsage: this.venueStatus.marginUsage }
+        : {}),
     };
   }
 
@@ -268,12 +302,15 @@ export class App {
     return {
       mode: config.mode,
       venue: config.venue,
+      assetClass: config.assetClass,
       uptimeMs: Date.now() - this.startedAt,
       feedConnected: this.feed?.isConnected() ?? false,
       dataStale: staleness.isStale(),
       killSwitchActive: killSwitch.isActive(),
       reconcileHalted: this.reconciler?.isHalted() ?? false,
+      marketOpen: this.venueStatus.marketOpen,
       symbols: config.symbols,
+      symbolSpecs: config.symbolSpecs,
       prices: Object.fromEntries(
         config.symbols
           .map((s) => [s, this.feed?.lastPrice?.(s)?.price] as const)
@@ -282,6 +319,23 @@ export class App {
       openOrders: this.oms?.openOrders() ?? [],
       realizedPnl: this.riskTracker?.realizedPnl() ?? 0,
       dailyLoss: this.riskTracker?.dailyLoss() ?? 0,
+      venueStatus: this.venueStatus,
+      forex:
+        config.assetClass === "forex"
+          ? {
+              marginUsage: this.venueStatus.marginUsage ?? null,
+              marginLevel: this.venueStatus.marginLevel ?? null,
+              swapCost: this.venueStatus.swapCost ?? null,
+              marginUsageLimit: config.forexMarginUsageLimit,
+              marginAlertThreshold: config.forexMarginAlertThreshold,
+              pipValues: Object.fromEntries(
+                config.symbolSpecs.map((spec) => [
+                  spec.symbol,
+                  forexPipValue(this.feed?.lastPrice?.(spec.symbol)?.price ?? 0, spec) ?? null,
+                ]),
+              ),
+            }
+          : undefined,
       strategy: {
         name: strategy.name,
         validation: strategy.validation ?? null, // Deflated Sharpe + PBO görünür
@@ -299,5 +353,44 @@ export class App {
     this.feed?.stop();
     void this.dashboard?.stop();
     this.deps.logger.info("bot durduruldu");
+  }
+
+  private createFeed(): FeedLike {
+    const { config, logger, alerts, staleness, adapter } = this.deps;
+    if (config.venue === "binance") {
+      return new MarketDataFeed({
+        symbols: config.symbols,
+        streamBase: binanceStreamBase(config.mode),
+        restBase: binanceRestBase(config.mode),
+        logger,
+        alerts,
+        staleness,
+        heartbeatTimeoutMs: config.staleDataThresholdMs,
+      });
+    }
+    if (adapter?.fetchLatestPrices === undefined) {
+      throw new Error(`${config.venue} venue fiyat polling yüzeyi sunmuyor`);
+    }
+    return new PollingMarketDataFeed({
+      symbols: config.symbols,
+      pollIntervalMs: config.marketDataPollIntervalMs,
+      logger,
+      alerts,
+      staleness,
+      fetchLatestPrices: (symbols) => adapter.fetchLatestPrices!(symbols),
+    });
+  }
+
+  private async refreshVenueStatus(): Promise<void> {
+    const symbols = this.deps.config.symbols;
+    this.venueStatus =
+      (await this.deps.adapter?.fetchVenueStatus?.(symbols)) ?? this.venueStatus;
+  }
+
+  private symbolSpec(symbol: string): SymbolSpec {
+    return (
+      this.deps.config.symbolSpecs.find((spec) => spec.symbol === symbol) ??
+      this.deps.config.symbolSpecs[0]!
+    );
   }
 }

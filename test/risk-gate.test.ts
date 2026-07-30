@@ -19,6 +19,7 @@ function makeOrder(overrides: Partial<Order> = {}): Order {
 function makeCtx(overrides: Partial<RiskContext> = {}): RiskContext {
   return {
     mode: "DRY_RUN",
+    assetClass: "crypto",
     killSwitchActive: false,
     lastPrice: 100,
     dataStale: false,
@@ -108,5 +109,43 @@ describe("risk kapısı", () => {
       makeCtx({ mode: "LIVE" }),
     );
     expect(smallLive.allowed).toBe(true);
+  });
+
+  it("forex piyasası kapalıysa yeni emir reddedilir", () => {
+    const decision = checkOrder(
+      makeOrder({ symbol: "EURUSD", quantity: 0.1, price: 1.1 }),
+      makeCtx({ assetClass: "forex", contractSize: 100_000, marketOpen: false, lastPrice: 1.1 }),
+    );
+    expect(decision.allowed).toBe(false);
+  });
+
+  it("forex notional hesabı lot ve kontrat boyutunu kullanır", () => {
+    const decision = checkOrder(
+      makeOrder({ symbol: "EURUSD", quantity: 0.2, price: 1.1 }),
+      makeCtx({
+        assetClass: "forex",
+        contractSize: 100_000,
+        pipSize: 0.0001,
+        lastPrice: 1.1,
+        currentGrossNotional: HARD_LIMITS.maxGrossNotional - 1_000,
+      }),
+    );
+    expect(decision.allowed).toBe(false);
+  });
+
+  it("forex margin kullanım eşiği aşılınca yeni risk durur", () => {
+    const decision = checkOrder(
+      makeOrder({ symbol: "EURUSD", quantity: 0.01, price: 1.1 }),
+      makeCtx({
+        assetClass: "forex",
+        contractSize: 100_000,
+        marketOpen: true,
+        lastPrice: 1.1,
+        marginUsage: 0.8,
+        marginUsageLimit: 0.7,
+      }),
+    );
+    expect(decision.allowed).toBe(false);
+    if (!decision.allowed) expect(decision.reason).toMatch(/margin/);
   });
 });

@@ -321,6 +321,10 @@ export class Oms {
           continue; // AYNI clientOrderId ile retry — idempotent
         }
         // Venue reddi (iş kuralı/HTTP hatası): REJECTED, sonsuz retry YOK.
+        this.opts.alerts.raise("order_rejected", "venue emri reddetti", {
+          clientOrderId: entry.order.clientOrderId,
+          reason: trimReason(err),
+        });
         this.applyState(entry, "REJECTED", `venue reddi: ${trimReason(err)}`);
         this.saveBook();
         return { accepted: false, reason: trimReason(err), order: entry.order };
