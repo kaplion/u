@@ -41,13 +41,19 @@ describe("Faz 7 — dashboard", () => {
     expect(body.feedConnected).toBe(true);
   });
 
-  it("GET / durum sayfasını döner", async () => {
+  it("GET / durum sayfasını döner — KILL SWITCH ve sparkline içerir", async () => {
     const { base } = await startDashboard();
     const res = await fetch(`${base}/`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
     expect(html).toContain("KILL SWITCH");
+    // SSE bağlantısı
+    expect(html).toContain("/events");
+    // Sparkline için SVG DOM API kullanıldığını gösteren referans
+    expect(html).toContain("SVG_NS");
+    // Ham JSON bölümü
+    expect(html).toContain("Ham JSON");
   });
 
   it("POST /kill kill switch dosyasını oluşturur — dışarıdan tetik", async () => {
@@ -55,6 +61,8 @@ describe("Faz 7 — dashboard", () => {
     expect(existsSync(killSwitchFile)).toBe(false);
     const res = await fetch(`${base}/kill`, { method: "POST" });
     expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.killSwitch).toBe(true);
     expect(existsSync(killSwitchFile)).toBe(true);
     // KillSwitch da aynı dosyayı görür — yeni risk artık durur.
     expect(new KillSwitch(killSwitchFile).isActive()).toBe(true);
@@ -64,5 +72,31 @@ describe("Faz 7 — dashboard", () => {
     const { base } = await startDashboard();
     const res = await fetch(`${base}/yok-boyle-bir-yol`);
     expect(res.status).toBe(404);
+  });
+
+  it("GET /events SSE akışı başlatır — text/event-stream ve ilk veri", async () => {
+    const { base } = await startDashboard({ mode: "DRY_RUN", feedConnected: true });
+    // fetch ile SSE stream'in ilk chunk'ını oku; tam stream'i beklemiyoruz
+    const ac = new AbortController();
+    const res = await fetch(`${base}/events`, { signal: ac.signal });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    // İlk veriyi chunk olarak oku
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    let text = "";
+    // İlk iki chunk yeterli (yorum satırı + data satırı)
+    for (let i = 0; i < 2; i++) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    ac.abort();
+    expect(text).toContain("data:");
+    // Gelen veri geçerli JSON içermeli
+    const dataLine = text.split("\n").find((l) => l.startsWith("data:"));
+    expect(dataLine).toBeDefined();
+    const payload = JSON.parse(dataLine!.slice(5).trim()) as Record<string, unknown>;
+    expect(payload.mode).toBe("DRY_RUN");
   });
 });
